@@ -1,0 +1,7 @@
+torch>=2.1
+torchaudio>=2.1
+numpy
+soundfile
+# optional, both free/local:
+# faster-whisper   # auto-transcribe your voice sample (prep --whisper small)
+# g2p_en           # phoneme frontend (prep --phonemes), much better for small datasets

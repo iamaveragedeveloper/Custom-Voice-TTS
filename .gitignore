@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+data/
+runs/
+outputs/
+*.wav
+*.pt
+.pytest_cache/
