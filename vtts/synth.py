@@ -12,9 +12,9 @@ from .models.vocoder import Generator
 
 
 class Synthesizer:
-    """Loads acoustic + vocoder checkpoints; fp16 on GPU. Without a vocoder falls back to Griffin-Lim."""
+    """Loads acoustic + vocoder checkpoints; fp16 is opt-in (broken cuDNN half convs on GTX 16xx). Without a vocoder falls back to Griffin-Lim."""
 
-    def __init__(self, acoustic, vocoder=None, device=None, fp16=True):
+    def __init__(self, acoustic, vocoder=None, device=None, fp16=False):
         self.dev = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.amp = fp16 and self.dev.type == "cuda"
         ck = torch.load(acoustic, map_location=self.dev)

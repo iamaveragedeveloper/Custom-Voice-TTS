@@ -1,0 +1,7 @@
+acoustic: 14.2M params, 107 utts, device=cuda
+step 50/10000 mel=3.969 dur=0.856 pitch=0.817 energy=1.086 ctc=16.239 bin=4.098 0.87s/it
+step 100/10000 mel=3.049 dur=0.806 pitch=0.661 energy=0.681 ctc=16.226 bin=4.117 0.86s/it
+step 150/10000 mel=2.175 dur=1.309 pitch=0.553 energy=0.588 ctc=16.108 bin=3.734 0.90s/it
+step 200/10000 mel=1.575 dur=1.311 pitch=0.498 energy=0.545 ctc=15.917 bin=3.404 0.91s/it
+step 250/10000 mel=1.262 dur=1.145 pitch=0.518 energy=0.487 ctc=15.690 bin=3.183 0.89s/it
+step 300/10000 mel=1.150 dur=1.045 pitch=0.585 energy=0.505 ctc=15.432 bin=2.973 0.90s/it

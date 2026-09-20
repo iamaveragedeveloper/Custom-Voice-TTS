@@ -1,0 +1,4 @@
+vocoder: G 0.9M params, device=cuda
+step 50/60000 mel=0.950 D=1.167 G=61.318 1.73s/it
+step 100/60000 mel=1.364 D=3.370 G=76.235 1.68s/it
+step 150/60000 mel=0.922 D=1.670 G=58.089 1.69s/it

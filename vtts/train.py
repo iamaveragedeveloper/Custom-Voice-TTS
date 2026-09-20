@@ -26,7 +26,7 @@ def _load_partial(model, state):
 
 
 def train_acoustic(data, out, steps=20000, max_frames=10000, lr=1e-3, device=None, init=None, resume=True,
-                   amp=True, log_every=50, save_every=1000, cfg: AcousticConfig = None):
+                   amp=False, log_every=50, save_every=500, cfg: AcousticConfig = None):
     dev = _dev(device)
     meta = load_meta(data)
     audio = AudioConfig(**meta["audio"])
@@ -89,7 +89,7 @@ def train_acoustic(data, out, steps=20000, max_frames=10000, lr=1e-3, device=Non
 
 
 def train_vocoder(data, out, steps=100000, batch=8, seg=8192, lr=2e-4, device=None, init=None, resume=True,
-                  small=False, log_every=50, save_every=2000, workers=0):
+                  small=False, log_every=50, save_every=2000, workers=0, g_only_steps=0):
     dev = _dev(device)
     meta = load_meta(data)
     audio = AudioConfig(**meta["audio"])
@@ -126,15 +126,20 @@ def train_vocoder(data, out, steps=100000, batch=8, seg=8192, lr=2e-4, device=No
             yg = G(mel)
             n = min(yg.shape[-1], y.shape[-1])
             y_, yg = y[:, None, :n], yg[..., :n]
-            od.zero_grad()
-            r, g, _, _ = D(y_, yg.detach())
-            ld = d_loss(r, g)
-            ld.backward(); od.step()
+            gan = step >= g_only_steps  # generator-only warm-up: mel loss alone, ~6x cheaper per step
+            ld = torch.zeros(())
+            if gan:
+                od.zero_grad()
+                r, g, _, _ = D(y_, yg.detach())
+                ld = d_loss(r, g)
+                ld.backward(); od.step()
 
             og.zero_grad()
             l_mel = torch.nn.functional.l1_loss(mel_spectrogram(yg[:, 0], audio), mel)
-            r, g, fr, fg = D(y_, yg)
-            lg = 45 * l_mel + 2 * fm_loss(fr, fg) + g_loss(g)
+            lg = 45 * l_mel
+            if gan:
+                r, g, fr, fg = D(y_, yg)
+                lg = lg + 2 * fm_loss(fr, fg) + g_loss(g)
             lg.backward(); og.step()
             step += 1
             if step % log_every == 0:

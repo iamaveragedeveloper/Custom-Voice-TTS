@@ -40,7 +40,7 @@ def mel_spectrogram(y, c: AudioConfig):
     return torch.log(torch.clamp(basis @ mag, min=1e-5))
 
 
-def estimate_f0(y, c: AudioConfig, fmin=60.0, fmax=500.0, thr=0.25):
+def estimate_f0(y, c: AudioConfig, fmin=40.0, fmax=400.0, thr=0.25):
     """Autocorrelation F0 per mel frame (0 = unvoiced). y: (T,) with T % hop == 0."""
     pad = (c.n_fft - c.hop) // 2
     y = F.pad(y[None, None], (pad, pad), mode="reflect")[0, 0]
@@ -51,7 +51,12 @@ def estimate_f0(y, c: AudioConfig, fmin=60.0, fmax=500.0, thr=0.25):
     ac = torch.fft.irfft(torch.fft.rfft(fr, n=n).abs() ** 2, n=n)[:, : c.n_fft]
     ac = ac / (ac[:, :1] + 1e-8)
     lo, hi = int(c.sr / fmax), int(c.sr / fmin)
-    peak, idx = ac[:, lo:hi].max(1)
+    seg = ac[:, lo - 1: hi + 1]
+    is_peak = (seg[:, 1:-1] > seg[:, :-2]) & (seg[:, 1:-1] >= seg[:, 2:])  # true local maxima only
+    cand = torch.where(is_peak, seg[:, 1:-1], torch.full_like(seg[:, 1:-1], -1.0))
+    peak = cand.max(1).values
+    # first (shortest-lag) peak within 90% of the best avoids octave-down errors; skip picks inside low-lag ramp
+    idx = (cand >= 0.9 * peak[:, None]).float().argmax(1)
     f0 = c.sr / (idx + lo).float()
     return torch.where((peak > thr) & (rms > 2e-3), f0, torch.zeros_like(f0))
 
