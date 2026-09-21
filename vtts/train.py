@@ -26,7 +26,7 @@ def _load_partial(model, state):
 
 
 def train_acoustic(data, out, steps=20000, max_frames=10000, lr=1e-3, device=None, init=None, resume=True,
-                   amp=False, log_every=50, save_every=500, cfg: AcousticConfig = None):
+                   amp=False, log_every=50, save_every=500, cfg: AcousticConfig = None, max_minutes=None):
     dev = _dev(device)
     meta = load_meta(data)
     audio = AudioConfig(**meta["audio"])
@@ -61,6 +61,7 @@ def train_acoustic(data, out, steps=20000, max_frames=10000, lr=1e-3, device=Non
 
     model.train()
     t0, acc = time.time(), {}
+    deadline = time.time() + max_minutes * 60 if max_minutes else None
     while step < steps:
         for ids in ds.batches(max_frames):
             b = {k: v.to(dev) for k, v in ds.collate(ids).items()}
@@ -81,6 +82,9 @@ def train_acoustic(data, out, steps=20000, max_frames=10000, lr=1e-3, device=Non
                 acc, t0 = {}, time.time()
             if step % save_every == 0:
                 save(last)
+            if deadline and time.time() > deadline:
+                print(f"time limit reached at step {step}")
+                steps = step
             if step >= steps:
                 break
     save(last)
@@ -89,7 +93,7 @@ def train_acoustic(data, out, steps=20000, max_frames=10000, lr=1e-3, device=Non
 
 
 def train_vocoder(data, out, steps=100000, batch=8, seg=8192, lr=2e-4, device=None, init=None, resume=True,
-                  small=False, log_every=50, save_every=2000, workers=0, g_only_steps=0):
+                  small=False, log_every=50, save_every=2000, workers=0, g_only_steps=0, max_minutes=None):
     dev = _dev(device)
     meta = load_meta(data)
     audio = AudioConfig(**meta["audio"])
@@ -119,6 +123,7 @@ def train_vocoder(data, out, steps=100000, batch=8, seg=8192, lr=2e-4, device=No
                         cfg=to_dict(vc), audio=to_dict(audio)), path)
 
     t0 = time.time()
+    deadline = t0 + max_minutes * 60 if max_minutes else None
     while step < steps:
         for y in dl:
             y = y.to(dev)
@@ -148,6 +153,9 @@ def train_vocoder(data, out, steps=100000, batch=8, seg=8192, lr=2e-4, device=No
                 t0 = time.time()
             if step % save_every == 0:
                 save(last)
+            if deadline and time.time() > deadline:
+                print(f"time limit reached at step {step}")
+                steps = step
             if step >= steps:
                 break
     save(last)

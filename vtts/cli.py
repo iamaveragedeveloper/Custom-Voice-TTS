@@ -21,6 +21,7 @@ def main():
     p.add_argument("--init", help="checkpoint to fine-tune from")
     p.add_argument("--no-resume", action="store_true")
     p.add_argument("--amp", action="store_true", help="fp16 (do NOT use on GTX 16xx cards)")
+    p.add_argument("--max-minutes", type=float, help="stop and save after this long")
 
     p = sub.add_parser("train-vocoder")
     p.add_argument("--data", required=True); p.add_argument("--out", required=True)
@@ -29,6 +30,7 @@ def main():
     p.add_argument("--small", action="store_true", help="128-channel generator (~4x faster)")
     p.add_argument("--init"); p.add_argument("--no-resume", action="store_true")
     p.add_argument("--g-only-steps", type=int, default=0, help="train generator on mel loss only for N steps first")
+    p.add_argument("--max-minutes", type=float, help="stop and save after this long")
 
     p = sub.add_parser("synth")
     p.add_argument("--text", required=True); p.add_argument("--acoustic", required=True)
@@ -44,11 +46,12 @@ def main():
         prep(a.input, a.out, a.metadata, a.whisper, a.phonemes, a.speaker)
     elif a.cmd == "train-acoustic":
         from .train import train_acoustic
-        train_acoustic(a.data, a.out, a.steps, a.max_frames, a.lr, init=a.init, resume=not a.no_resume, amp=a.amp)
+        train_acoustic(a.data, a.out, a.steps, a.max_frames, a.lr, init=a.init, resume=not a.no_resume, amp=a.amp,
+                       max_minutes=a.max_minutes)
     elif a.cmd == "train-vocoder":
         from .train import train_vocoder
         train_vocoder(a.data, a.out, a.steps, a.batch, small=a.small, init=a.init, resume=not a.no_resume,
-                      g_only_steps=a.g_only_steps)
+                      g_only_steps=a.g_only_steps, max_minutes=a.max_minutes)
     else:
         from .audio import save_wav
         from .synth import Synthesizer
