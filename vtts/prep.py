@@ -72,7 +72,7 @@ def _transcribe(paths, model_name):
     return res
 
 
-def prep(input, out, metadata=None, whisper=None, phonemes=False, speaker="speaker0", max_len=12.0):
+def prep(input, out, metadata=None, whisper=None, phonemes=False, speaker="speaker0", max_len=12.0, repeat=None):
     cfg = AudioConfig()
     input, out = Path(input), Path(out)
     (out / "wavs").mkdir(parents=True, exist_ok=True)
@@ -122,7 +122,7 @@ def prep(input, out, metadata=None, whisper=None, phonemes=False, speaker="speak
             continue
         torch.save(dict(tok=tok, mel=mel, f0=estimate_f0(yt, cfg), energy=mel.mean(0), spk=spk_names.index(sp)),
                    out / "feats" / f"{name}.pt")
-        index[name] = dict(frames=mel.shape[1], tokens=len(tok), text=txt)
+        index[name] = dict(frames=mel.shape[1], tokens=len(tok), text=txt, spk=sp)
 
     # normalisation statistics, then rewrite features with normalised pitch/energy
     lf0, en = [], []
@@ -145,7 +145,7 @@ def prep(input, out, metadata=None, whisper=None, phonemes=False, speaker="speak
         del d["f0"]
         torch.save(d, p)
     meta = dict(audio=to_dict(cfg), phonemes=phonemes, speakers=spk_names, stats=stats, index=index,
-                n_vocab=T.N_VOCAB)
+                n_vocab=T.N_VOCAB, repeat=repeat or {})
     json.dump(meta, open(out / "meta.json", "w"), indent=1)
     hrs = sum(v["frames"] for v in index.values()) * cfg.hop / cfg.sr / 3600
     print(f"prepared {len(index)} utterances, {hrs * 60:.1f} min, speakers={spk_names} -> {out}")

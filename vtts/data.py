@@ -12,11 +12,34 @@ def load_meta(root):
     return json.load(open(Path(root) / "meta.json"))
 
 
+def split_names(meta, val_frac=0.1, min_for_val=5):
+    """Held-out clips per speaker (evenly spaced). Returns (train_names, val_names), both unique."""
+    by_spk = {}
+    for n in sorted(meta["index"]):
+        by_spk.setdefault(meta["index"][n].get("spk", n.split("_")[0]), []).append(n)
+    train, val = [], []
+    for names in by_spk.values():
+        k = max(1, round(len(names) * val_frac)) if len(names) >= min_for_val else 0
+        v = {names[int((i + 0.5) * len(names) / k)] for i in range(k)} if k else set()
+        val += sorted(v)
+        train += [n for n in names if n not in v]
+    return train, val
+
+
 class AcousticDataset(Dataset):
-    def __init__(self, root):
+    """split: 'train' (held-out removed, speakers repeated per meta['repeat']), 'val', or 'all' (no repeats)."""
+
+    def __init__(self, root, split="train"):
         self.root = Path(root)
         self.meta = load_meta(root)
-        self.names = list(self.meta["index"])
+        train, val = split_names(self.meta)
+        if split == "val":
+            self.names = val
+        elif split == "all":
+            self.names = sorted(self.meta["index"])
+        else:
+            rep = self.meta.get("repeat", {})
+            self.names = [n for n in train for _ in range(rep.get(self.meta["index"][n].get("spk"), 1))]
 
     def __len__(self):
         return len(self.names)
@@ -58,23 +81,33 @@ class AcousticDataset(Dataset):
         return b
 
 
-class WavSegments(Dataset):
-    """Random fixed-length waveform crops for vocoder training."""
+class VocoderData(Dataset):
+    """Aligned (waveform crop, mel crop) pairs. If data/pred/<name>.pt exists (acoustic-model output, see
+    `cache-pred`), the vocoder is fed those blurry mels with probability pred_prob so it learns to
+    clean up what the acoustic model actually produces."""
 
-    def __init__(self, root, sr, seg=8192):
-        self.files = sorted((Path(root) / "wavs").glob("*.wav"))
-        self.sr, self.seg = sr, seg
+    def __init__(self, root, sr, hop=256, seg_frames=32, pred_prob=0.5):
+        self.root, self.sr, self.hop, self.sf = Path(root), sr, hop, seg_frames
+        self.names = sorted(load_meta(root)["index"])
+        self.has_pred = (self.root / "pred").exists()
+        self.pred_prob = pred_prob if self.has_pred else 0.0
         self.cache = {}
 
     def __len__(self):
-        return len(self.files) * 8  # several crops per file per epoch
+        return len(self.names) * 8
 
     def __getitem__(self, i):
-        f = self.files[i % len(self.files)]
-        if f not in self.cache:
-            self.cache[f] = torch.from_numpy(load_wav(f, self.sr))
-        y = self.cache[f]
-        if len(y) <= self.seg:
-            y = torch.nn.functional.pad(y, (0, self.seg - len(y) + 1))
-        s = random.randint(0, len(y) - self.seg - 1)
-        return y[s: s + self.seg]
+        n = self.names[i % len(self.names)]
+        if n not in self.cache:
+            y = torch.from_numpy(load_wav(self.root / "wavs" / f"{n}.wav", self.sr))
+            mp = torch.load(self.root / "pred" / f"{n}.pt").float() if self.has_pred else None
+            self.cache[n] = (y[: len(y) // self.hop * self.hop], mp)
+        y, mp = self.cache[n]
+        seg = self.sf * self.hop
+        n_frames = len(y) // self.hop
+        if n_frames <= self.sf:
+            return torch.nn.functional.pad(y, (0, seg - len(y))), torch.zeros(mp.shape[0] if mp is not None else 80, self.sf), torch.tensor(0.0)
+        s = random.randint(0, n_frames - self.sf)
+        use_pred = mp is not None and random.random() < self.pred_prob
+        mel = mp[:, s: s + self.sf] if use_pred else torch.zeros(mp.shape[0] if mp is not None else 80, self.sf)
+        return y[s * self.hop: (s + self.sf) * self.hop], mel, torch.tensor(1.0 if use_pred else 0.0)

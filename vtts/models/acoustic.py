@@ -135,6 +135,20 @@ class AcousticModel(nn.Module):
             x = b(x, mpad)
         return self.out(x).transpose(1, 2)  # B,n_mels,T
 
+    def _align(self, tok, tlen, mel, mlen, tpad):
+        """Soft alignment scores + hard MAS path (B,N,T)."""
+        B, N = tok.shape
+        T = mel.shape[2]
+        with torch.autocast("cuda", enabled=False):
+            soft = self.aligner(tok, mel.float(), tpad)  # B,T,N
+            with torch.no_grad():
+                s = soft.detach().cpu().numpy()
+                path = torch.zeros(B, N, T)
+                for i in range(B):
+                    path[i, : tlen[i], : mlen[i]] = torch.from_numpy(mas(s[i, : mlen[i], : tlen[i]].T))
+                path = path.to(tok.device)
+        return soft, path
+
     def forward(self, b, bin_w=0.0):
         tok, tlen, mel, mlen, pitch, energy, spk = (b[k] for k in
                                                      ("tok", "tlen", "mel", "mlen", "pitch", "energy", "spk"))
@@ -143,17 +157,11 @@ class AcousticModel(nn.Module):
         tpad = torch.arange(N, device=tok.device)[None] >= tlen[:, None]
         mpad = torch.arange(T, device=tok.device)[None] >= mlen[:, None]
 
+        soft, path = self._align(tok, tlen, mel, mlen, tpad)
         with torch.autocast("cuda", enabled=False):
-            soft = self.aligner(tok, mel.float(), tpad)  # B,T,N
             lp = F.log_softmax(F.pad(soft, (1, 0), value=-1.0), -1)
             tgt = torch.arange(1, N + 1, device=tok.device)[None].expand(B, -1)
             l_ctc = F.ctc_loss(lp.transpose(0, 1), tgt, mlen, tlen, blank=0, zero_infinity=True)
-            with torch.no_grad():
-                s = soft.detach().cpu().numpy()
-                path = torch.zeros(B, N, T)
-                for i in range(B):
-                    path[i, : tlen[i], : mlen[i]] = torch.from_numpy(mas(s[i, : mlen[i], : tlen[i]].T))
-                path = path.to(tok.device)
             l_bin = -(soft.transpose(1, 2) * path).sum() / path.sum()
 
         dur = path.sum(2)
@@ -174,6 +182,23 @@ class AcousticModel(nn.Module):
 
         loss = l_mel + 0.1 * (l_dur + l_pit + l_en) + 2.0 * l_ctc + bin_w * l_bin
         return loss, dict(mel=l_mel, dur=l_dur, pitch=l_pit, energy=l_en, ctc=l_ctc, bin=l_bin)
+
+    @torch.no_grad()
+    def teacher_forced(self, b):
+        """Predicted mel using the true (MAS) alignment + true pitch/energy. Used to train the vocoder on
+        the acoustic model's own (slightly blurry) output."""
+        tok, tlen, mel, mlen, pitch, energy, spk = (b[k] for k in
+                                                     ("tok", "tlen", "mel", "mlen", "pitch", "energy", "spk"))
+        T = mel.shape[2]
+        tpad = torch.arange(tok.shape[1], device=tok.device)[None] >= tlen[:, None]
+        mpad = torch.arange(T, device=tok.device)[None] >= mlen[:, None]
+        _, path = self._align(tok, tlen, mel, mlen, tpad)
+        norm = path.sum(2).clamp(min=1)
+        pt = (path @ pitch[..., None]).squeeze(-1) / norm
+        et = (path @ energy[..., None]).squeeze(-1) / norm
+        h = self.encode(tok, tpad, spk)
+        h = h + self.pitch_emb(pt[..., None]) + self.energy_emb(et[..., None])
+        return self.decode(path.transpose(1, 2) @ h, mpad, spk)
 
     @torch.no_grad()
     def infer(self, tok, spk, speed=1.0, pitch_shift=0.0, energy_shift=0.0):

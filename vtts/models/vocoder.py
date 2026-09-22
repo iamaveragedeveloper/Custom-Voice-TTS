@@ -135,3 +135,16 @@ def g_loss(fake):
 
 def fm_loss(fr, fg):
     return sum((a - b).abs().mean() for x, y in zip(fr, fg) for a, b in zip(x, y))
+
+
+def mr_stft_loss(y, yg, cfgs=((512, 128), (1024, 256), (2048, 512))):
+    """Multi-resolution STFT loss (spectral convergence + log-magnitude). Penalises the periodic
+    frame-rate buzz that a single mel L1 loss lets through. y, yg: (B, T)."""
+    def mag(x, n, h):
+        st = torch.stft(x, n, h, n, torch.hann_window(n, device=x.device), return_complex=True)
+        return torch.sqrt(st.real ** 2 + st.imag ** 2 + 1e-9)
+    tot = 0.0
+    for n, h in cfgs:
+        a, b = mag(y, n, h), mag(yg, n, h)
+        tot = tot + torch.norm(a - b) / torch.norm(a) + F.l1_loss(torch.log(a), torch.log(b))
+    return tot / len(cfgs)

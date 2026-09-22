@@ -22,6 +22,7 @@ def main():
     p.add_argument("--no-resume", action="store_true")
     p.add_argument("--amp", action="store_true", help="fp16 (do NOT use on GTX 16xx cards)")
     p.add_argument("--max-minutes", type=float, help="stop and save after this long")
+    p.add_argument("--eval-every", type=int, default=500)
 
     p = sub.add_parser("train-vocoder")
     p.add_argument("--data", required=True); p.add_argument("--out", required=True)
@@ -31,6 +32,11 @@ def main():
     p.add_argument("--init"); p.add_argument("--no-resume", action="store_true")
     p.add_argument("--g-only-steps", type=int, default=0, help="train generator on mel loss only for N steps first")
     p.add_argument("--max-minutes", type=float, help="stop and save after this long")
+    p.add_argument("--d-warmup-steps", type=int, default=0, help="train only the discriminators for N steps first")
+    p.add_argument("--pred-prob", type=float, default=0.5, help="share of steps fed acoustic-model mels")
+
+    p = sub.add_parser("cache-pred", help="cache acoustic-model mels for vocoder training")
+    p.add_argument("--data", required=True); p.add_argument("--acoustic", required=True)
 
     p = sub.add_parser("synth")
     p.add_argument("--text", required=True); p.add_argument("--acoustic", required=True)
@@ -47,11 +53,15 @@ def main():
     elif a.cmd == "train-acoustic":
         from .train import train_acoustic
         train_acoustic(a.data, a.out, a.steps, a.max_frames, a.lr, init=a.init, resume=not a.no_resume, amp=a.amp,
-                       max_minutes=a.max_minutes)
+                       max_minutes=a.max_minutes, eval_every=a.eval_every)
     elif a.cmd == "train-vocoder":
         from .train import train_vocoder
         train_vocoder(a.data, a.out, a.steps, a.batch, small=a.small, init=a.init, resume=not a.no_resume,
-                      g_only_steps=a.g_only_steps, max_minutes=a.max_minutes)
+                      g_only_steps=a.g_only_steps, max_minutes=a.max_minutes, pred_prob=a.pred_prob,
+                      d_warmup_steps=a.d_warmup_steps)
+    elif a.cmd == "cache-pred":
+        from .predcache import cache_pred
+        cache_pred(a.data, a.acoustic)
     else:
         from .audio import save_wav
         from .synth import Synthesizer
