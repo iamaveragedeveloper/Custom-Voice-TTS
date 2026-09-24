@@ -45,6 +45,7 @@ def main():
     p.add_argument("--semitones", type=float, default=0.0)
     p.add_argument("--speaker", type=int, default=0)
     p.add_argument("--bench", action="store_true")
+    p.add_argument("--ultron-fx", type=float, metavar="STRENGTH", help="apply the Ultron filter (0.6 = your chosen preset B)")
 
     a = ap.parse_args()
     if a.cmd == "prep":
@@ -69,6 +70,9 @@ def main():
         if a.bench:
             s.bench(a.text)
         y = s.tts(a.text, speaker=a.speaker, speed=a.speed, semitones=a.semitones)
+        if a.ultron_fx:
+            from .fx import ultron
+            y = ultron(y, s.audio.sr, intensity=a.ultron_fx, sat=0.0, metal=0.25)  # preset B: no grit, light metal
         save_wav(a.out, y, s.audio.sr)
         print(f"wrote {a.out} ({len(y) / s.audio.sr:.2f}s)")
 
