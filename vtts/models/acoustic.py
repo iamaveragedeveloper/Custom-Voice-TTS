@@ -201,13 +201,18 @@ class AcousticModel(nn.Module):
         return self.decode(path.transpose(1, 2) @ h, mpad, spk)
 
     @torch.no_grad()
-    def infer(self, tok, spk, speed=1.0, pitch_shift=0.0, energy_shift=0.0):
-        """tok (B,N) -> mel (B,n_mels,T). pitch_shift/energy_shift are in normalised units."""
+    def infer(self, tok, spk, speed=1.0, pitch_shift=0.0, energy_shift=0.0, pitch_var=1.0):
+        """tok (B,N) -> mel (B,n_mels,T). pitch_shift/energy_shift are in normalised units; pitch_var > 1 exaggerates
+        the predicted pitch movement around the utterance mean (more expressive), < 1 flattens it."""
         tpad = tok == 0
         h = self.encode(tok, tpad, spk)
         dur = (torch.exp(self.dur(h, tpad).float()) - 1) / max(speed, 1e-3)
         dur = dur.round().clamp(min=1).long().masked_fill(tpad, 0)
-        p = self.pitch(h, tpad) + pitch_shift
+        self.last_dur = dur  # lets the runtime find pauses (punctuation tokens)
+        p = self.pitch(h, tpad)
+        m = (~tpad).float()
+        pm = (p * m).sum(1, keepdim=True) / m.sum(1, keepdim=True).clamp(min=1)
+        p = pm + (p - pm) * pitch_var + pitch_shift
         e = self.energy(h, tpad) + energy_shift
         h = h + self.pitch_emb(p[..., None].to(h.dtype)) + self.energy_emb(e[..., None].to(h.dtype))
         xf, mpad = expand(h, dur)

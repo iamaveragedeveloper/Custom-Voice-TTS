@@ -11,6 +11,9 @@ from .models.acoustic import AcousticModel
 from .models.vocoder import Generator
 
 
+_PAUSE_IDS = [T.TOK[c] for c in ".,!?;:-"]
+
+
 class Synthesizer:
     """Loads acoustic + vocoder checkpoints; fp16 is opt-in (broken cuDNN half convs on GTX 16xx). Without a vocoder falls back to Griffin-Lim."""
 
@@ -31,14 +34,26 @@ class Synthesizer:
             self.voc.strip_norm().eval()
 
     @torch.no_grad()
-    def mel(self, text, speaker=0, speed=1.0, semitones=0.0):
+    def mel(self, text, speaker=0, speed=1.0, semitones=0.0, pitch_var=1.0):
         tok = torch.tensor([T.encode(text, self.phonemes)], device=self.dev)
+        self._last_tok = tok
         if tok.numel() == 0:
             return None
         spk = torch.tensor([speaker], device=self.dev)
         shift = semitones * math.log(2) / 12 / self.stats["pitch_std"]
         with torch.autocast(self.dev.type, dtype=torch.float16, enabled=self.amp):
-            return self.am.infer(tok, spk, speed, shift)
+            return self.am.infer(tok, spk, speed, shift, pitch_var=pitch_var)
+
+    def _pause_mask(self, n_samples, fade_ms=12):
+        """1 where there is speech, 0 over punctuation tokens (the model's own pause regions), smooth edges."""
+        tok = self._last_tok[0].cpu().numpy()
+        dur = self.am.last_dur[0].cpu().numpy()
+        frame_tok = np.repeat(tok, dur)
+        speech = ~np.isin(frame_tok, _PAUSE_IDS)
+        m = np.repeat(speech.astype(np.float32), self.audio.hop)
+        m = np.pad(m, (0, max(n_samples - len(m), 0)), constant_values=1.0)[:n_samples]
+        k = int(self.audio.sr * fade_ms / 1000) | 1
+        return np.clip(np.convolve(m, np.hanning(k) / np.hanning(k).sum(), mode="same"), 0, 1).astype(np.float32)
 
     @torch.no_grad()
     def wave(self, mel):
@@ -47,13 +62,16 @@ class Synthesizer:
         with torch.autocast(self.dev.type, dtype=torch.float16, enabled=self.amp):
             return self.voc(mel)[0, 0].float().cpu().numpy()
 
-    def stream(self, text, **kw):
+    def stream(self, text, gap=0.3, gate=True, **kw):
         """Yield one waveform chunk per sentence so playback can start before the full text is done."""
         for s in T.split_sentences(text):
             m = self.mel(s, **kw)
             if m is not None:
-                yield self.wave(m)
-                yield np.zeros(int(0.12 * self.audio.sr), np.float32)
+                w = self.wave(m)
+                if gate:
+                    w = w * self._pause_mask(len(w))
+                yield w
+                yield np.zeros(int(gap * self.audio.sr), np.float32)
 
     def tts(self, text, **kw):
         chunks = list(self.stream(text, **kw))

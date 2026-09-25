@@ -22,7 +22,7 @@ The target voice is Ultron (James Spader, *Avengers: Age of Ultron*), built from
 | Speed | Excellent: ~82x real time on a GTX 1650 Ti, ~13x real time on CPU alone |
 | Clean voice (speaker 0) | Intelligible, deep, Ultron-like. Some slurred words. Residual vocoder buzz ("pulse") |
 | Movie voice (speaker 1) | Right timbre in places (e.g. the word "me"), but inconsistent - only 1 minute of source audio |
-| "Ultron sound" | Best result so far = clean voice + DSP Ultron filter (preset B, strength 0.6) |
+| "Ultron sound" | Best so far = clean voice + Ultron filter (preset B 0.6) + film-matched EQ + noise reduction |
 | Not solved | Studio-clean quality; needs more Ultron audio and/or more vocoder training |
 
 Nothing here is a finished product. It is a working proof of concept with a clear path to improve.
@@ -42,8 +42,18 @@ python -m vtts synth --text "I am Ultron, I come for peace and I want the Avenge
 # speed check:            add --bench
 ```
 
-Options: `--speed` (0.85 sounds best; <1 = slower), `--semitones` (pitch shift), `--speaker` (0 = clean,
-1 = movie), `--ultron-fx STRENGTH` (0 = off; 0.6 = preset B; 1.0 = full).
+Best-known command for the Ultron sound (film-matched EQ + noise reduction):
+
+```bash
+python -m vtts synth --text "I was meant to be new. I was meant to be beautiful." \
+    --acoustic runs/best/acoustic.pt --vocoder runs/best/vocoder.pt --speaker 0 --speed 0.85 \
+    --ultron-fx 0.6 --eq runs/best/ultron_eq.npz --out outputs/ultron.wav
+```
+
+Options: `--speed` (0.85 sounds best; <1 = slower), `--semitones` (pitch shift), `--pitch-var` (>1 = more expressive
+pitch), `--speaker` (0 = clean, 1 = movie), `--ultron-fx STRENGTH` (0 = off; 0.6 = preset B; 1.0 = full),
+`--eq FILE` (film-matched tone curve, built by `scripts/build_eq.py`), `--clean STRENGTH` (noise reduction; default 1.5,
+0 = off, 2.5 = strong but starts to damage speech).
 
 From Python:
 
