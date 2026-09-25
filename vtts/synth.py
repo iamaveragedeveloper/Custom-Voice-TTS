@@ -12,6 +12,11 @@ from .models.vocoder import Generator
 
 
 _PAUSE_IDS = [T.TOK[c] for c in ".,!?;:-"]
+_DIPH = {"AW", "AY", "OY", "EY", "OW"}
+_VOWEL = _DIPH | {"AA", "AE", "AH", "AO", "EH", "ER", "IH", "IY", "UH", "UW"}
+# minimum frames (1 frame = 11.6 ms): the duration model sometimes squeezes a vowel to ~2 frames, which makes
+# the word (especially a sentence-initial "I") disappear
+_MIN_FRAMES = dict(mono=7, diph=11, first_vowel=14, cons=2)
 
 
 class Synthesizer:
@@ -34,15 +39,33 @@ class Synthesizer:
             self.voc.strip_norm().eval()
 
     @torch.no_grad()
-    def mel(self, text, speaker=0, speed=1.0, semitones=0.0, pitch_var=1.0):
+    def mel(self, text, speaker=0, speed=1.0, semitones=0.0, pitch_var=1.0, min_dur=True):
         tok = torch.tensor([T.encode(text, self.phonemes)], device=self.dev)
         self._last_tok = tok
+        md = self._min_dur(tok[0]) if min_dur else None
         if tok.numel() == 0:
             return None
         spk = torch.tensor([speaker], device=self.dev)
         shift = semitones * math.log(2) / 12 / self.stats["pitch_std"]
         with torch.autocast(self.dev.type, dtype=torch.float16, enabled=self.amp):
-            return self.am.infer(tok, spk, speed, shift, pitch_var=pitch_var)
+            return self.am.infer(tok, spk, speed, shift, pitch_var=pitch_var, min_dur=md)
+
+    def _min_dur(self, tok):
+        """(1,N) minimum frames per token; the first vowel of the utterance gets a longer floor."""
+        syms = [T.VOCAB[int(t)] for t in tok.cpu()]
+        out, first_done = [], False
+        for sym in syms:
+            b = sym.rstrip("012")
+            if b in _VOWEL:
+                v = _MIN_FRAMES["diph" if b in _DIPH else "mono"]
+                if not first_done:
+                    v, first_done = _MIN_FRAMES["first_vowel"], True
+            elif sym == " " or not sym[0].isalpha():
+                v = 0
+            else:
+                v = _MIN_FRAMES["cons"]
+            out.append(v)
+        return torch.tensor([out], device=self.dev)
 
     def _pause_mask(self, n_samples, fade_ms=12):
         """1 where there is speech, 0 over punctuation tokens (the model's own pause regions), smooth edges."""

@@ -201,13 +201,16 @@ class AcousticModel(nn.Module):
         return self.decode(path.transpose(1, 2) @ h, mpad, spk)
 
     @torch.no_grad()
-    def infer(self, tok, spk, speed=1.0, pitch_shift=0.0, energy_shift=0.0, pitch_var=1.0):
+    def infer(self, tok, spk, speed=1.0, pitch_shift=0.0, energy_shift=0.0, pitch_var=1.0, min_dur=None):
         """tok (B,N) -> mel (B,n_mels,T). pitch_shift/energy_shift are in normalised units; pitch_var > 1 exaggerates
         the predicted pitch movement around the utterance mean (more expressive), < 1 flattens it."""
         tpad = tok == 0
         h = self.encode(tok, tpad, spk)
         dur = (torch.exp(self.dur(h, tpad).float()) - 1) / max(speed, 1e-3)
-        dur = dur.round().clamp(min=1).long().masked_fill(tpad, 0)
+        dur = dur.round().clamp(min=1).long()
+        if min_dur is not None:  # realistic floors (a vowel must not collapse to ~20 ms)
+            dur = torch.maximum(dur, min_dur.to(dur.device))
+        dur = dur.masked_fill(tpad, 0)
         self.last_dur = dur  # lets the runtime find pauses (punctuation tokens)
         p = self.pitch(h, tpad)
         m = (~tpad).float()
