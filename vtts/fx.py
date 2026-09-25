@@ -56,11 +56,15 @@ def apply_eq(y, sr, gain_db, taps=2049):
 
 
 # ---------------------------------------------------------------- noise reduction
-def denoise(y, sr, alpha=1.5, floor_db=-20.0, quiet_pct=12, n_fft=1024, hop=256):
+def denoise(y, sr, alpha=1.5, floor_db=-20.0, quiet_pct=12, n_fft=1024, hop=256, hf_extra=0.0, passes=1):
     """Spectral-subtraction noise reduction. The noise spectrum is learned from the quietest non-silent
     frames of the clip itself (vocoder hiss/buzz), subtracted with strength `alpha`, gains are smoothed in
     time and frequency to avoid 'musical noise', and never drop below floor_db."""
-    _, _, X = stft(y, sr, nperseg=n_fft, noverlap=n_fft - hop)
+    if passes > 1:  # repeat; each pass re-learns the (now lower) noise floor
+        for _ in range(passes):
+            y = denoise(y, sr, alpha, floor_db, quiet_pct, n_fft, hop, hf_extra, 1)
+        return y
+    f, _, X = stft(y, sr, nperseg=n_fft, noverlap=n_fft - hop)
     mag = np.abs(X)
     e = mag.mean(0)
     live = e > 1e-5
@@ -68,7 +72,9 @@ def denoise(y, sr, alpha=1.5, floor_db=-20.0, quiet_pct=12, n_fft=1024, hop=256)
         return y
     q = live & (e <= np.percentile(e[live], quiet_pct))
     noise = mag[:, q].mean(1, keepdims=True)
-    gain = np.clip((mag - alpha * noise) / (mag + 1e-9), 10 ** (floor_db / 20), 1.0)
+    # the hiss/buzz lives mostly in the highs: subtract harder there (hf_extra = extra strength at >= 7 kHz)
+    a = alpha * (1 + hf_extra * np.clip((f - 3000) / 4000, 0, 1))[:, None]
+    gain = np.clip((mag - a * noise) / (mag + 1e-9), 10 ** (floor_db / 20), 1.0)
     k = np.array([0.25, 0.5, 0.25])  # smooth over time, then frequency
     gain = np.apply_along_axis(lambda r: np.convolve(r, k, mode="same"), 1, gain)
     gain = np.apply_along_axis(lambda c: np.convolve(c, np.ones(5) / 5, mode="same"), 0, gain)
@@ -78,7 +84,7 @@ def denoise(y, sr, alpha=1.5, floor_db=-20.0, quiet_pct=12, n_fft=1024, hop=256)
 
 
 # ---------------------------------------------------------------- effect chain
-def ultron(y, sr, intensity=1.0, down=-3.0, metal_ms=4.5, metal=0.45, sat=2.2, room=0.12, lowpass=7500, eq=None, follow_silence=True, clean=0.0):
+def ultron(y, sr, intensity=1.0, down=-3.0, metal_ms=4.5, metal=0.45, sat=2.2, room=0.12, lowpass=7500, eq=None, follow_silence=True, clean=0.0, clean_hf=0.0, clean_passes=1):
     """y: float32 mono. intensity scales the effect. down=0 skips the deeper layer. lowpass=None keeps the top end.
     eq: gain curve from build_eq (applied last, so it corrects the tone of the whole chain).
     clean: noise-reduction strength (0 = off, 1.5 = moderate, 2.5 = strong)."""
@@ -99,7 +105,7 @@ def ultron(y, sr, intensity=1.0, down=-3.0, metal_ms=4.5, metal=0.45, sat=2.2, r
     if eq is not None:
         x = apply_eq(x, sr, eq)
     if clean > 0:  # noise reduction AFTER the EQ, so the boosted highs are cleaned too
-        x = denoise(x, sr, alpha=clean)
+        x = denoise(x, sr, alpha=clean, hf_extra=clean_hf, passes=clean_passes)
     if follow_silence:  # digital silence in the dry voice stays silent after the chain
         hop = int(sr * 0.005)
         n = len(y) // hop

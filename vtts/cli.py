@@ -45,6 +45,8 @@ def main():
     p.add_argument("--semitones", type=float, default=0.0)
     p.add_argument("--pitch-var", type=float, default=1.0, help="pitch movement: >1 more expressive, <1 flatter")
     p.add_argument("--clean", type=float, default=1.5, help="noise reduction strength (1.5 moderate, 2.5 strong)")
+    p.add_argument("--clean-hf", type=float, default=0.0, help="extra noise-reduction strength above 7 kHz")
+    p.add_argument("--clean-passes", type=int, default=1)
     p.add_argument("--eq", help="matching-EQ file from scripts/build_eq.py (applied with --ultron-fx)")
     p.add_argument("--speaker", type=int, default=0)
     p.add_argument("--bench", action="store_true")
@@ -79,7 +81,8 @@ def main():
             eq = np.load(a.eq)["gain_db"] if a.eq else None
             # preset B (no grit, light metal); with an EQ the deeper layer and top-end cut are dropped
             y = ultron(y, s.audio.sr, intensity=a.ultron_fx, sat=0.0, metal=0.25, down=0.0 if eq is not None else -3.0,
-                       lowpass=None if eq is not None else 7500, eq=eq, clean=a.clean)
+                       lowpass=None if eq is not None else 7500, eq=eq, clean=a.clean,
+                       clean_hf=a.clean_hf, clean_passes=a.clean_passes)
         save_wav(a.out, y, s.audio.sr)
         print(f"wrote {a.out} ({len(y) / s.audio.sr:.2f}s)")
 

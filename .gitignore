@@ -6,3 +6,5 @@ outputs/
 *.wav
 *.pt
 .pytest_cache/
+# keep the numbered voice iterations (audio samples shown on GitHub)
+!iterations/*.wav

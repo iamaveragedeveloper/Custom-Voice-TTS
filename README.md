@@ -67,6 +67,12 @@ for chunk in s.stream("Long text. Split per sentence. Playback can start early."
     ...                                                                # streaming, one chunk per sentence
 ```
 
+## Voice iterations (listen on GitHub)
+
+Every voice line marked as good is saved in [`iterations/`](iterations/) as `iteration_N.wav` with what changed, the
+command to reproduce it, and speed/quality numbers - see [`iterations/README.md`](iterations/README.md). GitHub plays
+the `.wav` files directly (click the file, then play). Save the next one with `python scripts/save_iteration.py`.
+
 ## How it works
 
 ```
