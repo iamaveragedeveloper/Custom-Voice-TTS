@@ -44,7 +44,7 @@ def main():
     p.add_argument("--speed", type=float, default=1.0)
     p.add_argument("--semitones", type=float, default=0.0)
     p.add_argument("--pitch-var", type=float, default=1.0, help="pitch movement: >1 more expressive, <1 flatter")
-    p.add_argument("--clean", type=float, default=1.5, help="noise reduction strength (1.5 moderate, 2.5 strong)")
+    p.add_argument("--clean", type=float, default=1.0, help="noise reduction strength (1.0 light/safe, 1.5 moderate, 2.5 strong - eats speech)")
     p.add_argument("--clean-hf", type=float, default=0.0, help="extra noise-reduction strength above 7 kHz")
     p.add_argument("--clean-passes", type=int, default=1)
     p.add_argument("--eq", help="matching-EQ file from scripts/build_eq.py (applied with --ultron-fx)")
