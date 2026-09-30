@@ -44,6 +44,10 @@ def main():
     p.add_argument("--speed", type=float, default=1.0)
     p.add_argument("--semitones", type=float, default=0.0)
     p.add_argument("--pitch-var", type=float, default=1.0, help="pitch movement: >1 more expressive, <1 flatter")
+    p.add_argument("--contour-fall", type=float, default=0.0, help="terminal pitch fall (normalised units, ~0.3-0.6 is subtle-moderate)")
+    p.add_argument("--formant", type=float, default=1.0, help="formant-only shift ratio, independent of pitch (<1 deeper/bigger, >1 smaller); needs --ultron-fx")
+    p.add_argument("--ring-freq", type=float, default=0.0, help="ring-modulation carrier Hz (0=off, ~20-40 = robotic buzz); needs --ultron-fx")
+    p.add_argument("--ring-mix", type=float, default=0.5, help="ring-modulation wet/dry mix")
     p.add_argument("--clean", type=float, default=1.0, help="noise reduction strength (1.0 light/safe, 1.5 moderate, 2.5 strong - eats speech)")
     p.add_argument("--clean-hf", type=float, default=0.0, help="extra noise-reduction strength above 7 kHz")
     p.add_argument("--clean-passes", type=int, default=1)
@@ -74,7 +78,8 @@ def main():
         s = Synthesizer(a.acoustic, a.vocoder)
         if a.bench:
             s.bench(a.text)
-        y = s.tts(a.text, speaker=a.speaker, speed=a.speed, semitones=a.semitones, pitch_var=a.pitch_var)
+        y = s.tts(a.text, speaker=a.speaker, speed=a.speed, semitones=a.semitones, pitch_var=a.pitch_var,
+                  contour_fall=a.contour_fall)
         if a.ultron_fx:
             from .fx import ultron
             import numpy as np
@@ -82,7 +87,8 @@ def main():
             # preset B (no grit, light metal); with an EQ the deeper layer and top-end cut are dropped
             y = ultron(y, s.audio.sr, intensity=a.ultron_fx, sat=0.0, metal=0.25, down=0.0 if eq is not None else -3.0,
                        lowpass=None if eq is not None else 7500, eq=eq, clean=a.clean,
-                       clean_hf=a.clean_hf, clean_passes=a.clean_passes)
+                       clean_hf=a.clean_hf, clean_passes=a.clean_passes, formant=a.formant,
+                       ring_freq=a.ring_freq, ring_mix=a.ring_mix)
         save_wav(a.out, y, s.audio.sr)
         print(f"wrote {a.out} ({len(y) / s.audio.sr:.2f}s)")
 

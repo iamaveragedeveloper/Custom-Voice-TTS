@@ -83,9 +83,55 @@ def denoise(y, sr, alpha=1.5, floor_db=-20.0, quiet_pct=12, n_fft=1024, hop=256,
     return np.pad(out, (0, len(y) - len(out))).astype(np.float32)
 
 
+# ---------------------------------------------------------------- formant shift (pitch-independent)
+def formant_shift(y, sr, ratio=1.0, n_fft=1024, hop=256, env_taps=None):
+    """Shift the spectral envelope (formants) by `ratio` while leaving pitch and timing untouched.
+    ratio < 1 lowers the formants (bigger/deeper vocal-tract character - the "size" cue a plain pitch
+    shift can't give); ratio > 1 raises them (smaller). Separates each STFT frame into a smooth envelope
+    (cepstral liftering) and fine harmonic structure, resamples the envelope along frequency, then
+    reapplies it to the original phase and fine structure - a standard, simplified vocal-tract-length
+    warp (no dynamic time alignment across frames)."""
+    if ratio == 1.0:
+        return y.astype(np.float32)
+    _, _, X = stft(y, sr, nperseg=n_fft, noverlap=n_fft - hop)
+    mag = np.abs(X) + 1e-9
+    phase = np.angle(X)
+    if env_taps is None:
+        env_taps = max(int(sr / 200), 8)  # keep quefrency detail up to ~200 Hz pitch floor out of the envelope
+    cep = np.fft.irfft(np.log(mag), axis=0)
+    lifter = np.zeros_like(cep)
+    lifter[:env_taps] = 1.0
+    lifter[-(env_taps - 1):] = 1.0
+    env = np.exp(np.fft.rfft(cep * lifter, axis=0).real)
+    fine = mag / env
+    n_bins = mag.shape[0]
+    bins = np.arange(n_bins)
+    warped_env = np.stack([np.interp(bins / ratio, bins, env[:, t], left=env[0, t], right=env[-1, t])
+                           for t in range(env.shape[1])], axis=1)
+    Xw = (fine * warped_env) * np.exp(1j * phase)
+    _, out = istft(Xw, sr, nperseg=n_fft, noverlap=n_fft - hop)
+    out = out[: len(y)]
+    return np.pad(out, (0, len(y) - len(out))).astype(np.float32)
+
+
+# ---------------------------------------------------------------- ring modulation
+def ring_mod(y, sr, freq=30.0, mix=0.5, carrier="sine"):
+    """Amplitude-modulate the voice by a low-frequency carrier - the classic robot/Dalek buzz, a different
+    character from the metallic comb filter. freq: carrier Hz (~20-40 = buzzy robotic, ~60-120 = more
+    metallic/ring-y). mix: 0 = dry, 1 = fully modulated (usually too unintelligible - keep it partial)."""
+    if freq <= 0 or mix <= 0:
+        return y.astype(np.float32)
+    t = np.arange(len(y)) / sr
+    c = np.sin(2 * np.pi * freq * t) if carrier == "sine" else np.sign(np.sin(2 * np.pi * freq * t))
+    return ((1 - mix) * y + mix * y * c).astype(np.float32)
+
+
 # ---------------------------------------------------------------- effect chain
-def ultron(y, sr, intensity=1.0, down=-3.0, metal_ms=4.5, metal=0.45, sat=2.2, room=0.12, lowpass=7500, eq=None, follow_silence=True, clean=0.0, clean_hf=0.0, clean_passes=1):
-    """y: float32 mono. intensity scales the effect. down=0 skips the deeper layer. lowpass=None keeps the top end.
+def ultron(y, sr, intensity=1.0, down=-3.0, formant=1.0, metal_ms=4.5, metal=0.45, ring_freq=0.0, ring_mix=0.5,
+          sat=2.2, room=0.12, lowpass=7500, eq=None, follow_silence=True, clean=0.0, clean_hf=0.0, clean_passes=1):
+    """y: float32 mono. intensity scales the effect. down=0 skips the deeper pitch-shifted layer.
+    formant: pitch-independent formant-shift ratio (1.0 = off, <1 deeper/bigger). ring_freq > 0 adds ring
+    modulation (robotic buzz) mixed at ring_mix. lowpass=None keeps the top end.
     eq: gain curve from build_eq (applied last, so it corrects the tone of the whole chain).
     clean: noise-reduction strength (0 = off, 1.5 = moderate, 2.5 = strong)."""
     y = y.astype(np.float32)
@@ -95,8 +141,12 @@ def ultron(y, sr, intensity=1.0, down=-3.0, metal_ms=4.5, metal=0.45, sat=2.2, r
         x = 0.55 * y + 0.75 * lo
     else:
         x = y.copy()
+    if formant != 1.0:
+        x = formant_shift(x, sr, formant)
     if metal > 0:
         x = x + metal * intensity * (_comb_fast(x, sr, metal_ms, 0.7) - x)  # metallic resonance
+    if ring_freq > 0:
+        x = ring_mod(x, sr, ring_freq, ring_mix)
     if sat > 0:
         x = np.tanh(sat * intensity * x) / np.tanh(sat * intensity)  # grit (0 = off)
     band = [70, lowpass] if lowpass else 70

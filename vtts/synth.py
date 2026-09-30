@@ -39,7 +39,7 @@ class Synthesizer:
             self.voc.strip_norm().eval()
 
     @torch.no_grad()
-    def mel(self, text, speaker=0, speed=1.0, semitones=0.0, pitch_var=1.0, min_dur=True):
+    def mel(self, text, speaker=0, speed=1.0, semitones=0.0, pitch_var=1.0, min_dur=True, contour_fall=0.0):
         tok = torch.tensor([T.encode(text, self.phonemes)], device=self.dev)
         self._last_tok = tok
         md = self._min_dur(tok[0]) if min_dur else None
@@ -48,7 +48,7 @@ class Synthesizer:
         spk = torch.tensor([speaker], device=self.dev)
         shift = semitones * math.log(2) / 12 / self.stats["pitch_std"]
         with torch.autocast(self.dev.type, dtype=torch.float16, enabled=self.amp):
-            return self.am.infer(tok, spk, speed, shift, pitch_var=pitch_var, min_dur=md)
+            return self.am.infer(tok, spk, speed, shift, pitch_var=pitch_var, min_dur=md, contour_fall=contour_fall)
 
     def _min_dur(self, tok):
         """(1,N) minimum frames per token; the first vowel of the utterance gets a longer floor."""

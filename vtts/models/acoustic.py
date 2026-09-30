@@ -201,9 +201,12 @@ class AcousticModel(nn.Module):
         return self.decode(path.transpose(1, 2) @ h, mpad, spk)
 
     @torch.no_grad()
-    def infer(self, tok, spk, speed=1.0, pitch_shift=0.0, energy_shift=0.0, pitch_var=1.0, min_dur=None):
+    def infer(self, tok, spk, speed=1.0, pitch_shift=0.0, energy_shift=0.0, pitch_var=1.0, min_dur=None,
+              contour_fall=0.0, fall_start=0.55):
         """tok (B,N) -> mel (B,n_mels,T). pitch_shift/energy_shift are in normalised units; pitch_var > 1 exaggerates
-        the predicted pitch movement around the utterance mean (more expressive), < 1 flattens it."""
+        the predicted pitch movement around the utterance mean (more expressive), < 1 flattens it. contour_fall
+        (normalised pitch units) pulls pitch down over the last (1 - fall_start) fraction of tokens - a terminal
+        fall reads as deliberate/menacing delivery rather than a flat, synthetic one."""
         tpad = tok == 0
         h = self.encode(tok, tpad, spk)
         dur = (torch.exp(self.dur(h, tpad).float()) - 1) / max(speed, 1e-3)
@@ -216,6 +219,11 @@ class AcousticModel(nn.Module):
         m = (~tpad).float()
         pm = (p * m).sum(1, keepdim=True) / m.sum(1, keepdim=True).clamp(min=1)
         p = pm + (p - pm) * pitch_var + pitch_shift
+        if contour_fall != 0.0:
+            n = tok.shape[1]
+            frac = torch.arange(n, device=tok.device).float()[None] / max(n - 1, 1)
+            ramp = ((frac - fall_start) / max(1 - fall_start, 1e-6)).clamp(0, 1)
+            p = p - contour_fall * ramp
         e = self.energy(h, tpad) + energy_shift
         h = h + self.pitch_emb(p[..., None].to(h.dtype)) + self.energy_emb(e[..., None].to(h.dtype))
         xf, mpad = expand(h, dur)
