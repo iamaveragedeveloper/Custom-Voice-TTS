@@ -1,18 +1,59 @@
-"""Builds colab/train_ultron_v3.ipynb and colab/ultron_project_v3.zip"""
+"""Builds colab/train_ultron_v3.ipynb and colab/ultron_project_v3.zip
+
+Kept small enough to fit GitHub's 100MB per-file limit with plenty of room (the old zip was ~186MB):
+- the acoustic checkpoint is stripped to just what `--init` and `cache-pred` need (no optimizer state,
+  which the notebook never reads) and cast to fp16 (tested: negligible effect - it's only a starting
+  point for further training anyway).
+- feats/ (mel spectrograms etc., ~19MB, cheap to recompute) is left out of the bundle; the notebook
+  rebuilds it from wavs/ + meta.json on first run via scripts/regen_feats.py (no Whisper needed - the
+  transcripts are already in meta.json).
+"""
 import json
 import os
+import shutil
+import tempfile
 import zipfile
 
-with zipfile.ZipFile('colab/ultron_project_v3.zip', 'w', zipfile.ZIP_DEFLATED) as z:
-    for root in ('vtts', 'data/all'):
-        for d, _, fs in os.walk(root):
-            if '__pycache__' in d:
+import torch
+
+ZIP_PATH = "colab/ultron_project_v3.zip"
+
+with tempfile.TemporaryDirectory() as tmp:
+    # stripped, fp16 acoustic checkpoint: model weights + the small config/metadata bits `--init` and
+    # `cache-pred` actually read (see vtts/train.py::_load_partial and vtts/predcache.py). No optimizer
+    # state (~2/3 of the original 170MB) - the notebook never resumes this checkpoint's optimizer, it
+    # only ever loads it via --init, which reads the 'model' key alone.
+    ck = torch.load("runs/best/acoustic.pt", map_location="cpu")
+    slim = {
+        "model": {k: v.half() if v.is_floating_point() else v for k, v in ck["model"].items()},
+        "cfg": ck["cfg"], "audio": ck["audio"], "n_vocab": ck["n_vocab"], "stats": ck["stats"],
+        "phonemes": ck["phonemes"], "speakers": ck["speakers"], "step": ck["step"],
+    }
+    acoustic_slim_path = os.path.join(tmp, "acoustic_init.pt")
+    torch.save(slim, acoustic_slim_path)
+    before, after = os.path.getsize("runs/best/acoustic.pt"), os.path.getsize(acoustic_slim_path)
+    print(f"acoustic checkpoint: {before / 1e6:.1f} MB -> {after / 1e6:.1f} MB (stripped optimizer, cast to fp16)")
+
+    with zipfile.ZipFile(ZIP_PATH, "w", zipfile.ZIP_DEFLATED) as z:
+        for root in ("vtts", "scripts/regen_feats.py"):
+            if os.path.isfile(root):
+                z.write(root)
                 continue
-            for f in fs:
-                z.write(os.path.join(d, f))
-    z.write('runs/best/acoustic.pt', 'runs/ultron/acoustic_init.pt')   # v1 acoustic (step 8000, with optimizer)
-    z.write('runs/best/vocoder.pt', 'runs/ultron/vocoder_init.pt')     # v1 vocoder generator
-print('zip MB', round(os.path.getsize('colab/ultron_project_v3.zip') / 1e6, 1))
+            for d, _, fs in os.walk(root):
+                if "__pycache__" in d:
+                    continue
+                for f in fs:
+                    z.write(os.path.join(d, f))
+        z.write("data/all/meta.json", "data/all/meta.json")
+        for f in os.listdir("data/all/wavs"):
+            z.write(os.path.join("data/all/wavs", f), f"data/all/wavs/{f}")
+        z.write(acoustic_slim_path, "runs/ultron/acoustic_init.pt")
+        z.write("runs/best/vocoder.pt", "runs/ultron/vocoder_init.pt")  # v1 vocoder generator (already small)
+
+size_mb = os.path.getsize(ZIP_PATH) / 1e6
+print(f"zip MB {size_mb:.1f}")
+if size_mb > 90:
+    print("WARNING: still close to GitHub's 100MB hard limit")
 
 md = lambda s: dict(cell_type='markdown', metadata={}, source=s.strip().splitlines(True))
 code = lambda s: dict(cell_type='code', metadata={}, execution_count=None, outputs=[], source=s.strip().splitlines(True))
@@ -25,7 +66,8 @@ Runtime -> Change runtime type -> **T4 GPU**. Run cells top to bottom.
 
 **What is new vs v2:** validation on held-out clips (keeps the *best* acoustic checkpoint), resume-safe learning rate,
 a vocoder that trains on the acoustic model's own output, a discriminator warm-up, and a spectral loss that targets the
-periodic 'pulse' buzz.
+periodic 'pulse' buzz. The upload package is also much smaller now (feats/ is rebuilt on first run, the acoustic
+checkpoint ships without optimizer state and in fp16) so it fits comfortably under GitHub's 100MB file limit.
 
 **Resuming:** the last cell downloads `ultron_project_next.zip`. Next session upload *that* in cell 1 and just re-run.
 Colab wipes its disk when the session ends - download before closing the tab."""),
@@ -43,6 +85,9 @@ if not os.path.exists(f'{BASE}/vtts'):
 import nltk
 for p in ['averaged_perceptron_tagger','averaged_perceptron_tagger_eng','cmudict']: nltk.download(p, quiet=True)
 import torch; print(torch.cuda.get_device_name(0))
+# feats/ (mel spectrograms) isn't shipped in the zip to keep it small - rebuild it from wavs/ + meta.json.
+# No-op (prints "already present") on a resumed project.zip, which does carry feats/ forward.
+!cd {BASE} && PYTHONPATH={BASE} python scripts/regen_feats.py data/all
 """),
     md("""### Cell 2: cache the acoustic model's own spectrograms (about 1 minute)
 Uses the best acoustic checkpoint available. Re-run at the start of every session."""),
